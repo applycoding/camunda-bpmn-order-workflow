@@ -1,0 +1,11 @@
+target/
+agent-tools/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.DS_Store
+*.log
+.vscode/
+.attach_pid*

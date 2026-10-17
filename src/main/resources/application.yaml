@@ -1,0 +1,19 @@
+server:
+  port: 8096
+
+spring:
+  application:
+    name: order-workflow
+
+camunda:
+  client:
+    mode: self-managed
+    grpc-address: http://127.0.0.1:26500
+    rest-address: http://127.0.0.1:8088
+    prefer-rest-over-grpc: false
+    auth:
+      method: none
+
+logging:
+  level:
+    io.camunda: INFO

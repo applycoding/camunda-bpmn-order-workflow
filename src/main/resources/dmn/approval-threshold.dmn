@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
+             xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+             id="Definitions_approval_threshold"
+             name="Approval threshold"
+             namespace="http://camunda.org/order-approval/approval-threshold"
+             exporter="Camunda Modeler"
+             exporterVersion="5.34.0"
+             modeler:executionPlatform="Camunda Cloud"
+             modeler:executionPlatformVersion="8.8.0">
+  <decision id="approval-threshold" name="Approval threshold">
+    <decisionTable id="DecisionTable_approval_threshold" hitPolicy="UNIQUE">
+      <input id="Input_amount" label="Order amount">
+        <inputExpression id="InputExpression_amount" typeRef="number">
+          <text>amount</text>
+        </inputExpression>
+      </input>
+      <output id="Output_manual" label="Requires manual approval" name="requiresManualApproval" typeRef="boolean"/>
+      <rule id="Rule_at_or_below_threshold">
+        <description>Amounts of 1000 or less are approved automatically.</description>
+        <inputEntry id="UnaryTests_at_or_below">
+          <text>&lt;= 1000</text>
+        </inputEntry>
+        <outputEntry id="Literal_auto">
+          <text>false</text>
+        </outputEntry>
+      </rule>
+      <rule id="Rule_above_threshold">
+        <description>Amounts above 1000 wait for a person.</description>
+        <inputEntry id="UnaryTests_above">
+          <text>&gt; 1000</text>
+        </inputEntry>
+        <outputEntry id="Literal_manual">
+          <text>true</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram id="DMNDiagram_approval">
+      <dmndi:DMNShape id="DMNShape_approval" dmnElementRef="approval-threshold">
+        <dc:Bounds height="80" width="180" x="160" y="80"/>
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
+</definitions>

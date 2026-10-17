@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+                  id="Definitions_order_approval"
+                  targetNamespace="http://camunda.org/order-approval"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.34.0"
+                  modeler:executionPlatform="Camunda Cloud"
+                  modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="order-approval" name="Order approval" isExecutable="true">
+    <bpmn:documentation>Order received, credit check, DMN approval threshold, optional manual approval with a 15 minute escalation timer, inventory reservation, payment, and fulfilment. A declined payment releases the reservation. A fulfilment failure refunds the payment and releases the stock.</bpmn:documentation>
+
+    <bpmn:startEvent id="start-order-received" name="Order received">
+      <bpmn:outgoing>flow-start-credit</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="flow-start-credit" sourceRef="start-order-received" targetRef="check-credit"/>
+
+    <bpmn:serviceTask id="check-credit" name="Check credit">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="check-credit" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-start-credit</bpmn:incoming>
+      <bpmn:outgoing>flow-credit-gateway</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow-credit-gateway" sourceRef="check-credit" targetRef="gw-credit"/>
+
+    <bpmn:exclusiveGateway id="gw-credit" name="Credit approved?">
+      <bpmn:incoming>flow-credit-gateway</bpmn:incoming>
+      <bpmn:outgoing>flow-credit-ok</bpmn:outgoing>
+      <bpmn:outgoing>flow-credit-rejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="flow-credit-rejected" name="No" sourceRef="gw-credit" targetRef="end-credit-rejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=creditApproved = false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:endEvent id="end-credit-rejected" name="Credit rejected">
+      <bpmn:incoming>flow-credit-rejected</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow-credit-ok" name="Yes" sourceRef="gw-credit" targetRef="decide-approval">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=creditApproved = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:businessRuleTask id="decide-approval" name="Evaluate approval threshold">
+      <bpmn:extensionElements>
+        <zeebe:calledDecision decisionId="approval-threshold" resultVariable="requiresManualApproval"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-credit-ok</bpmn:incoming>
+      <bpmn:outgoing>flow-decision-gateway</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+
+    <bpmn:sequenceFlow id="flow-decision-gateway" sourceRef="decide-approval" targetRef="gw-manual"/>
+
+    <bpmn:exclusiveGateway id="gw-manual" name="Manual approval?">
+      <bpmn:incoming>flow-decision-gateway</bpmn:incoming>
+      <bpmn:outgoing>flow-manual</bpmn:outgoing>
+      <bpmn:outgoing>flow-auto</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="flow-manual" name="Above 1000" sourceRef="gw-manual" targetRef="approve-order">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=requiresManualApproval = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="flow-auto" name="At or below 1000" sourceRef="gw-manual" targetRef="reserve-inventory">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=requiresManualApproval = false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <!--
+      Job-worker user task. Zeebe creates a job of type io.camunda.zeebe:userTask.
+      Do not add zeebe:userTask: the embedded zeebe-process-test engine cannot complete Camunda user tasks.
+    -->
+    <bpmn:userTask id="approve-order" name="Approve order">
+      <bpmn:extensionElements>
+        <zeebe:assignmentDefinition candidateGroups="order-approvers"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-manual</bpmn:incoming>
+      <bpmn:outgoing>flow-approval-gateway</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:boundaryEvent id="approval-escalation-timer" name="15 minutes" cancelActivity="false" attachedToRef="approve-order">
+      <bpmn:outgoing>flow-timer-escalate</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="Timer_approval_sla">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT15M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+
+    <bpmn:sequenceFlow id="flow-timer-escalate" sourceRef="approval-escalation-timer" targetRef="escalate-approval"/>
+
+    <bpmn:serviceTask id="escalate-approval" name="Escalate overdue approval">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="escalate-approval" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-timer-escalate</bpmn:incoming>
+      <bpmn:outgoing>flow-escalate-end</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow-escalate-end" sourceRef="escalate-approval" targetRef="end-escalation-notified"/>
+
+    <bpmn:endEvent id="end-escalation-notified" name="Escalation sent">
+      <bpmn:incoming>flow-escalate-end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow-approval-gateway" sourceRef="approve-order" targetRef="gw-decision"/>
+
+    <bpmn:exclusiveGateway id="gw-decision" name="Approved?">
+      <bpmn:incoming>flow-approval-gateway</bpmn:incoming>
+      <bpmn:outgoing>flow-approved</bpmn:outgoing>
+      <bpmn:outgoing>flow-declined</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="flow-approved" name="Yes" sourceRef="gw-decision" targetRef="reserve-inventory">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approved = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="flow-declined" name="No" sourceRef="gw-decision" targetRef="end-rejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=approved = false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:endEvent id="end-rejected" name="Rejected">
+      <bpmn:incoming>flow-declined</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:serviceTask id="reserve-inventory" name="Reserve inventory">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="reserve-inventory" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-auto</bpmn:incoming>
+      <bpmn:incoming>flow-approved</bpmn:incoming>
+      <bpmn:outgoing>flow-reserve-payment</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="compensate-reserve" attachedToRef="reserve-inventory">
+      <bpmn:compensateEventDefinition id="CompensateDef_reserve"/>
+    </bpmn:boundaryEvent>
+
+    <bpmn:serviceTask id="release-inventory" name="Release inventory" isForCompensation="true">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="release-inventory" retries="3"/>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+
+    <bpmn:association id="assoc-release" associationDirection="One" sourceRef="compensate-reserve" targetRef="release-inventory"/>
+
+    <bpmn:sequenceFlow id="flow-reserve-payment" sourceRef="reserve-inventory" targetRef="collect-payment"/>
+
+    <bpmn:serviceTask id="collect-payment" name="Collect payment">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="collect-payment" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-reserve-payment</bpmn:incoming>
+      <bpmn:outgoing>flow-payment-fulfil</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="payment-failed" name="Payment failed" attachedToRef="collect-payment">
+      <bpmn:outgoing>flow-payment-error</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_payment" errorRef="Error_PaymentFailed"/>
+    </bpmn:boundaryEvent>
+
+    <bpmn:boundaryEvent id="compensate-payment" attachedToRef="collect-payment">
+      <bpmn:compensateEventDefinition id="CompensateDef_payment"/>
+    </bpmn:boundaryEvent>
+
+    <bpmn:serviceTask id="refund-payment" name="Refund payment" isForCompensation="true">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="refund-payment" retries="3"/>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+
+    <bpmn:association id="assoc-refund" associationDirection="One" sourceRef="compensate-payment" targetRef="refund-payment"/>
+
+    <bpmn:sequenceFlow id="flow-payment-error" sourceRef="payment-failed" targetRef="compensate-after-payment-failure"/>
+
+    <bpmn:intermediateThrowEvent id="compensate-after-payment-failure" name="Compensate">
+      <bpmn:incoming>flow-payment-error</bpmn:incoming>
+      <bpmn:outgoing>flow-payment-compensated</bpmn:outgoing>
+      <bpmn:compensateEventDefinition id="CompensateThrow_payment"/>
+    </bpmn:intermediateThrowEvent>
+
+    <bpmn:sequenceFlow id="flow-payment-compensated" sourceRef="compensate-after-payment-failure" targetRef="end-payment-failed"/>
+
+    <bpmn:endEvent id="end-payment-failed" name="Payment failed">
+      <bpmn:incoming>flow-payment-compensated</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow-payment-fulfil" sourceRef="collect-payment" targetRef="fulfil-order"/>
+
+    <bpmn:serviceTask id="fulfil-order" name="Fulfil order">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="fulfil-order" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-payment-fulfil</bpmn:incoming>
+      <bpmn:outgoing>flow-fulfil-done</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="fulfilment-failed" name="Fulfilment failed" attachedToRef="fulfil-order">
+      <bpmn:outgoing>flow-fulfil-error</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_fulfilment" errorRef="Error_FulfilmentFailed"/>
+    </bpmn:boundaryEvent>
+
+    <bpmn:sequenceFlow id="flow-fulfil-error" sourceRef="fulfilment-failed" targetRef="compensate-after-fulfilment-failure"/>
+
+    <bpmn:intermediateThrowEvent id="compensate-after-fulfilment-failure" name="Compensate">
+      <bpmn:incoming>flow-fulfil-error</bpmn:incoming>
+      <bpmn:outgoing>flow-fulfil-compensated</bpmn:outgoing>
+      <bpmn:compensateEventDefinition id="CompensateThrow_fulfilment"/>
+    </bpmn:intermediateThrowEvent>
+
+    <bpmn:sequenceFlow id="flow-fulfil-compensated" sourceRef="compensate-after-fulfilment-failure" targetRef="end-fulfilment-failed"/>
+
+    <bpmn:endEvent id="end-fulfilment-failed" name="Fulfilment failed">
+      <bpmn:incoming>flow-fulfil-compensated</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow-fulfil-done" sourceRef="fulfil-order" targetRef="end-completed"/>
+
+    <bpmn:endEvent id="end-completed" name="Order completed">
+      <bpmn:incoming>flow-fulfil-done</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+
+  <bpmn:error id="Error_PaymentFailed" name="Payment failed" errorCode="PAYMENT_FAILED"/>
+  <bpmn:error id="Error_FulfilmentFailed" name="Fulfilment failed" errorCode="FULFILMENT_FAILED"/>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_order_approval">
+    <bpmndi:BPMNPlane id="BPMNPlane_order_approval" bpmnElement="order-approval">
+      <bpmndi:BPMNShape id="Shape_start" bpmnElement="start-order-received">
+        <dc:Bounds x="152" y="202" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_check_credit" bpmnElement="check-credit">
+        <dc:Bounds x="240" y="180" width="120" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_gw_credit" bpmnElement="gw-credit" isMarkerVisible="true">
+        <dc:Bounds x="410" y="195" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_credit" bpmnElement="end-credit-rejected">
+        <dc:Bounds x="417" y="82" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_decide" bpmnElement="decide-approval">
+        <dc:Bounds x="510" y="180" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_gw_manual" bpmnElement="gw-manual" isMarkerVisible="true">
+        <dc:Bounds x="700" y="195" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_approve" bpmnElement="approve-order">
+        <dc:Bounds x="655" y="360" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_timer" bpmnElement="approval-escalation-timer">
+        <dc:Bounds x="707" y="342" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_escalate" bpmnElement="escalate-approval">
+        <dc:Bounds x="860" y="330" width="150" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_escalation" bpmnElement="end-escalation-notified">
+        <dc:Bounds x="1062" y="352" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_gw_decision" bpmnElement="gw-decision" isMarkerVisible="true">
+        <dc:Bounds x="700" y="500" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_rejected" bpmnElement="end-rejected">
+        <dc:Bounds x="707" y="610" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_reserve" bpmnElement="reserve-inventory">
+        <dc:Bounds x="820" y="180" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_compensate_reserve" bpmnElement="compensate-reserve">
+        <dc:Bounds x="862" y="242" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_release" bpmnElement="release-inventory">
+        <dc:Bounds x="820" y="720" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_payment" bpmnElement="collect-payment">
+        <dc:Bounds x="1020" y="180" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_payment_failed" bpmnElement="payment-failed">
+        <dc:Bounds x="1042" y="242" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_compensate_payment" bpmnElement="compensate-payment">
+        <dc:Bounds x="1102" y="242" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_refund" bpmnElement="refund-payment">
+        <dc:Bounds x="1020" y="720" width="140" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_comp_payment" bpmnElement="compensate-after-payment-failure">
+        <dc:Bounds x="1072" y="360" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_payment" bpmnElement="end-payment-failed">
+        <dc:Bounds x="1072" y="450" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_fulfil" bpmnElement="fulfil-order">
+        <dc:Bounds x="1220" y="180" width="130" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_fulfil_failed" bpmnElement="fulfilment-failed">
+        <dc:Bounds x="1267" y="242" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_comp_fulfil" bpmnElement="compensate-after-fulfilment-failure">
+        <dc:Bounds x="1267" y="360" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_fulfil" bpmnElement="end-fulfilment-failed">
+        <dc:Bounds x="1267" y="450" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_completed" bpmnElement="end-completed">
+        <dc:Bounds x="1412" y="202" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Edge_start_credit" bpmnElement="flow-start-credit">
+        <di:waypoint x="188" y="220"/>
+        <di:waypoint x="240" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_credit_gateway" bpmnElement="flow-credit-gateway">
+        <di:waypoint x="360" y="220"/>
+        <di:waypoint x="410" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_credit_rejected" bpmnElement="flow-credit-rejected">
+        <di:waypoint x="435" y="195"/>
+        <di:waypoint x="435" y="118"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_credit_ok" bpmnElement="flow-credit-ok">
+        <di:waypoint x="460" y="220"/>
+        <di:waypoint x="510" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_decision_gateway" bpmnElement="flow-decision-gateway">
+        <di:waypoint x="650" y="220"/>
+        <di:waypoint x="700" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_manual" bpmnElement="flow-manual">
+        <di:waypoint x="725" y="245"/>
+        <di:waypoint x="725" y="360"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_auto" bpmnElement="flow-auto">
+        <di:waypoint x="750" y="220"/>
+        <di:waypoint x="820" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_timer" bpmnElement="flow-timer-escalate">
+        <di:waypoint x="743" y="360"/>
+        <di:waypoint x="743" y="370"/>
+        <di:waypoint x="860" y="370"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_escalate_end" bpmnElement="flow-escalate-end">
+        <di:waypoint x="1010" y="370"/>
+        <di:waypoint x="1062" y="370"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_approval_gateway" bpmnElement="flow-approval-gateway">
+        <di:waypoint x="725" y="440"/>
+        <di:waypoint x="725" y="500"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_approved" bpmnElement="flow-approved">
+        <di:waypoint x="750" y="525"/>
+        <di:waypoint x="890" y="525"/>
+        <di:waypoint x="890" y="260"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_declined" bpmnElement="flow-declined">
+        <di:waypoint x="725" y="550"/>
+        <di:waypoint x="725" y="610"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_reserve_payment" bpmnElement="flow-reserve-payment">
+        <di:waypoint x="960" y="220"/>
+        <di:waypoint x="1020" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_payment_error" bpmnElement="flow-payment-error">
+        <di:waypoint x="1060" y="278"/>
+        <di:waypoint x="1060" y="360"/>
+        <di:waypoint x="1072" y="378"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_payment_compensated" bpmnElement="flow-payment-compensated">
+        <di:waypoint x="1090" y="396"/>
+        <di:waypoint x="1090" y="450"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_payment_fulfil" bpmnElement="flow-payment-fulfil">
+        <di:waypoint x="1160" y="220"/>
+        <di:waypoint x="1220" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_fulfil_error" bpmnElement="flow-fulfil-error">
+        <di:waypoint x="1285" y="278"/>
+        <di:waypoint x="1285" y="360"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_fulfil_compensated" bpmnElement="flow-fulfil-compensated">
+        <di:waypoint x="1285" y="396"/>
+        <di:waypoint x="1285" y="450"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_fulfil_done" bpmnElement="flow-fulfil-done">
+        <di:waypoint x="1350" y="220"/>
+        <di:waypoint x="1412" y="220"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_assoc_release" bpmnElement="assoc-release">
+        <di:waypoint x="880" y="278"/>
+        <di:waypoint x="880" y="720"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_assoc_refund" bpmnElement="assoc-refund">
+        <di:waypoint x="1120" y="278"/>
+        <di:waypoint x="1090" y="720"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

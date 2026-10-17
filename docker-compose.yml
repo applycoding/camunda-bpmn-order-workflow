@@ -1,0 +1,79 @@
+# Local Zeebe and Operate for this demo. Not a production deployment.
+# The orchestration image is Camunda's single process: broker, gateway, Operate, and Tasklist.
+# Login for the local UI is Camunda's published demo user (demo / demo). The API is unprotected.
+name: order-workflow
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.10
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      logger.org.elasticsearch.deprecation: "OFF"
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cat/health | grep -q -E 'green|yellow'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - elastic:/usr/share/elasticsearch/data
+
+  orchestration:
+    image: camunda/camunda:8.8.42
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "26500:26500"
+      - "9600:9600"
+      - "8088:8080"
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms512m -Xmx512m
+    configs:
+      - source: orchestration-config
+        target: /usr/local/camunda/config/application.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/9600'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    volumes:
+      - camunda:/usr/local/camunda/data
+
+configs:
+  orchestration-config:
+    content: |
+      camunda:
+        system:
+          cpu-thread-count: "2"
+          io-thread-count: "2"
+        security:
+          authentication:
+            method: basic
+            unprotectedApi: true
+          authorizations:
+            enabled: false
+          initialization:
+            users:
+              - username: demo
+                password: demo
+                name: Demo User
+                email: demo@demo.com
+            defaultRoles.admin.users:
+              - demo
+        database.index.numberOfReplicas: 0
+        data:
+          secondary-storage:
+            type: elasticsearch
+            elasticsearch:
+              url: http://elasticsearch:9200
+
+volumes:
+  camunda:
+  elastic:
