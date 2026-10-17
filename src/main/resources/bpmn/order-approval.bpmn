@@ -147,8 +147,6 @@
       </bpmn:extensionElements>
     </bpmn:serviceTask>
 
-    <bpmn:association id="assoc-release" associationDirection="One" sourceRef="compensate-reserve" targetRef="release-inventory"/>
-
     <bpmn:sequenceFlow id="flow-reserve-payment" sourceRef="reserve-inventory" targetRef="collect-payment"/>
 
     <bpmn:serviceTask id="collect-payment" name="Collect payment">
@@ -173,8 +171,6 @@
         <zeebe:taskDefinition type="refund-payment" retries="3"/>
       </bpmn:extensionElements>
     </bpmn:serviceTask>
-
-    <bpmn:association id="assoc-refund" associationDirection="One" sourceRef="compensate-payment" targetRef="refund-payment"/>
 
     <bpmn:sequenceFlow id="flow-payment-error" sourceRef="payment-failed" targetRef="compensate-after-payment-failure"/>
 
@@ -224,6 +220,9 @@
     <bpmn:endEvent id="end-completed" name="Order completed">
       <bpmn:incoming>flow-fulfil-done</bpmn:incoming>
     </bpmn:endEvent>
+
+    <bpmn:association id="assoc-release" associationDirection="One" sourceRef="compensate-reserve" targetRef="release-inventory"/>
+    <bpmn:association id="assoc-refund" associationDirection="One" sourceRef="compensate-payment" targetRef="refund-payment"/>
   </bpmn:process>
 
   <bpmn:error id="Error_PaymentFailed" name="Payment failed" errorCode="PAYMENT_FAILED"/>

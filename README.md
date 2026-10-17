@@ -12,7 +12,7 @@ This is a portfolio demo for Arpan Bom's CV. The credit bureau, warehouse, and p
 4. If that task is still open after **15 minutes**, a non-interrupting timer runs `escalate-approval`. The approval task stays open.
 5. Inventory is reserved, then payment is collected, then the order is fulfilled.
 6. If payment is declined, compensation **releases the reservation**. The charge never completed, so it is not refunded.
-7. If fulfilment fails after payment, compensation **refunds the payment** and then **releases the stock**.
+7. If fulfilment fails after payment, compensation **refunds the payment** and **releases the stock**.
 
 The approval user task is the job-worker kind (`io.camunda.zeebe:userTask`). It does not use the `zeebe:userTask` extension. Zeebe Process Test's embedded engine cannot complete Camunda user tasks, and these tests are required to run without Docker. Tasklist's newer user-task API may not list this task. The process tests complete the job directly.
 
@@ -55,7 +55,7 @@ flowchart TD
   reserve --> pay[Collect payment]
   pay -->|PAYMENT_FAILED| release[Compensate: release inventory]
   pay --> ship[Fulfil order]
-  ship -->|FULFILMENT_FAILED| refund[Compensate: refund, then release]
+  ship -->|FULFILMENT_FAILED| refund[Compensate: refund and release]
   ship --> done[Order completed]
 ```
 
@@ -122,7 +122,7 @@ mvn test
 - credit rejection
 - approver rejection
 - payment failure compensation (the reservation is released)
-- fulfilment failure compensation (refund, then stock release)
+- fulfilment failure compensation (refund and stock release)
 - the 15 minute escalation timer, after which the approval can still finish
 
 `WorkerTest` checks the workers against the fake backends, including the BPMN errors they throw. `OrderControllerTest` checks the REST API without a broker.
