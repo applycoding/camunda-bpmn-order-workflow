@@ -108,7 +108,7 @@ Fake rules, so you can force paths without a real backend:
 | `orderId` starts with `payfail-` | Payment worker throws `PAYMENT_FAILED` |
 | `orderId` starts with `shipfail-` | Fulfilment worker throws `FULFILMENT_FAILED` |
 
-`GET /api/health` does not need Zeebe. `POST /api/orders` does. If the broker is down, the start call returns HTTP 503.
+`GET /api/health` does not need Zeebe. `POST /api/orders` does. If the broker is down, the application still starts, deployment is skipped, and the start call returns HTTP 503. Restart the application after Zeebe is up so the BPMN and DMN are deployed.
 
 ## Test it
 
